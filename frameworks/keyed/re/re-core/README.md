@@ -1,0 +1,120 @@
+# @zhenre/core
+
+细粒度信号 + 真实 HTML 模板 + 锚点式 keyed 列表 + 原生 Web Components。
+零依赖，gzip ≈ 3.9KB。TypeScript strict，可擦除语法（node 原生可跑）。
+
+## API 一览
+
+```ts
+import {
+  // 响应式
+  signal, computed, effect, batch, untrack, isSignal,
+  // 模板
+  html, append,
+  // 列表
+  each,
+  // 组件
+  defineElement,
+} from '@zhenre/core';
+```
+
+### signal
+
+```ts
+const count = signal(0);
+count.value;            // 读（自动依赖收集）
+count.value = 1;        // 写（同步通知）
+count.peek();           // 免收集读取
+count.setQuiet(2);      // 静默写（直接 DOM 场景）
+```
+
+### computed / effect / batch
+
+```ts
+const double = computed(() => count.value * 2); // 惰性 + 缓存 + 订阅后推送
+const stop = effect(() => console.log(count.value)); // 自动追踪，返回清理函数
+batch(() => { a.value = 1; b.value = 2; });     // 合并通知
+```
+
+### html 模板
+
+```ts
+const frag = html`<p class="x">hi ${name}</p>`;
+append(parent, frag);        // 挂载（含 each 视图延迟挂载）
+frag.dispose();              // 清理订阅
+
+// 绑定规则：
+// ${signal}        → 文本/属性订阅（更新只写目标节点）
+// ${value}         → 静态文本
+// ${node}          → 子节点插入
+// ${each(...)}     → keyed 列表视图
+// onclick=${fn}    → 事件（属性赋值优先，自定义事件回退 addEventListener）
+// ref=${fn}        → 元素引用回调
+// attr=${signal}   → 属性/property（class→className、.checked→checked 等）
+```
+
+### each — keyed 列表
+
+```ts
+const rows = signal<Row[]>([]);
+const list = each(rows, (r) => r.id, (r) => html`<tr>...</tr>`);
+append(tbody, html`${list}`);
+
+// 声明式：rows.value = [...] 自动走快路径（追加/清空/全量替换/通用 diff）
+// 命令式 O(1)：
+list.swap(idA, idB);
+list.remove(id);
+list.ref(id);   // 行根节点（如做选中高亮）
+```
+
+#### 行进出场动画（Angular animate.enter/leave 模型）
+
+`opts.anim` 提供两个钩子：`enter` 在新行进入 DOM 时自动触发（无需返回值）；
+`leave` 返回 thenable 时，行的 DOM 移除被**挂住**直到其 settle——无论 resolve、
+reject 还是抛错，节点最终都会被移除。未传 `anim` 时所有路径与旧版完全一致
+（零开销，官方基准验证）。`@zhenre/animation` 的 `eachAnim()` 工厂产出兼容对象：
+
+```ts
+import { eachAnim } from '@zhenre/animation';
+
+each(rows, (r) => r.id, rowTpl, { anim: eachAnim('fade-in', 'fade-out') });
+each(rows, (r) => r.id, rowTpl, { anim: eachAnim({ enter: 'in', leave: gsapOut, timeout: 6000 }) });
+```
+
+钩子语义由 core 保证：ledger 立即对齐数据、leave 行以"幽灵节点"原位淡出、
+视图整体 `dispose()` 立即清理（对齐 Angular 同模板规则）。
+
+### defineElement — Web Components
+
+```ts
+defineElement('re-counter', (el, root) => {
+  const count = signal(0);
+  root.append(html`<button onclick=${() => count.value++}>${count}</button>`);
+  return () => cleanup(); // disconnectedCallback 时执行
+}, { shadow: false }); // shadow: true 时 root 为 shadowRoot
+```
+
+### onCleanup — 清理上下文（0.3.0 新增）
+
+组件 setup、keyed 行渲染、以及任何 `runWithCleanup` 作用域都会打开一个
+清理上下文；在其中调用 `onCleanup(fn)` 会随所有者销毁自动执行，
+`effect()` 也会自动登记（随作用域一起销毁，无需手动管理）：
+
+```ts
+defineElement('re-clock', (el, root) => {
+  const now = signal(new Date().toLocaleTimeString());
+  const t = setInterval(() => (now.value = new Date().toLocaleTimeString()), 1000);
+  onCleanup(() => clearInterval(t));   // 组件注销时自动清理
+  effect(() => document.title = now.value); // 同样随组件销毁
+  root.append(html`<span>${now}</span>`);
+});
+```
+
+`@zhenre/store` 的组件级 store 自动销毁正是建立在这个原语之上。
+
+## 构建
+
+```bash
+npm run build   # esbuild → dist/re.js + re.min.js + tsc 声明文件
+npm test        # node --test（47 项）
+```
