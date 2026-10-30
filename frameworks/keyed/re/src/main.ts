@@ -87,6 +87,11 @@ const rowBatch = rowRenderer<Row>(ROW_HTML, [[0, 0], [1, 0, 0]], {
 const rows = signal<Row[]>([]);
 const list = each(rows, (r) => r.id, rowBatch);
 
+// diagnostics hook (?debug) — exposes the live view for retention probes
+if (location.search.indexOf('debug') >= 0) {
+  (window as unknown as { __reView: unknown }).__reView = list;
+}
+
 const tbody = document.getElementById('tbody')!;
 mountEach(tbody, list);
 
