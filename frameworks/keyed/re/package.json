@@ -11,7 +11,7 @@
   },
   "scripts": {
     "dev": "esbuild src/main.ts --bundle --format=iife --outfile=dist/bundle.js --sourcemap",
-    "build-prod": "esbuild src/main.ts --bundle --format=iife --minify --outfile=dist/bundle.js"
+    "build-prod": "esbuild src/main.ts --bundle --format=iife --minify --mangle-props=^_ --outfile=dist/bundle.js"
   },
   "keywords": [
     "js-framework-benchmark",

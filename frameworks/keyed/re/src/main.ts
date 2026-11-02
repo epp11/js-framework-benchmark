@@ -13,9 +13,14 @@
  *     (compile-time-proven fine-grained path; row data is plain strings)
  *   - O(1) index-addressed direct ops: swapAt()/removeAt() — no key scans,
  *     no key array materialization
- *   - event delegation on tbody (1 listener; sectionRowIndex addresses rows)
+ *   - full-table ops use the whole-subtree detach discipline: never walk a
+ *     child list you can replace as one unit. replace/clear swap the tbody
+ *     for a fresh shallow clone (ONE removeChild detaches 1000 rows as a
+ *     subtree) and rehost() the anchored view into the new body — the same
+ *     Web API reasoning behind `textContent = ""`, applied one level up
+ *   - event delegation on the table (tbody-independent; 1 listener)
  */
-import { signal, each, mountEach, rowRenderer } from '@re/core';
+import { signal, mountList, rowRenderer, type KeyedView } from '@re/core';
 
 interface Row {
   id: number;
@@ -68,12 +73,10 @@ const ROW_HTML =
   '<td class="col-md-1"><a><span class="glyphicon glyphicon-remove" aria-hidden="true"></span></a></td>' +
   '<td class="col-md-6"></td></tr>';
 
-// slot paths: id text = [0,0]; label text = [1,0,0]
-// batch size is URL-tunable (?batch=N) for single-variable A/B experiments
-// (R7: 64 vs 128); default 64 = the R6-measured configuration.
-const BATCH = Number(new URLSearchParams(location.search).get('batch')) || 64;
+// slot paths: id text = [0,0]; label text = [1,0,0]; batch 64 = the
+// R6/R7-measured configuration (64 vs 128 wash, 32 tested and rejected)
 const rowBatch = rowRenderer<Row>(ROW_HTML, [[0, 0], [1, 0, 0]], {
-  batch: BATCH,
+  batch: 64,
   values(r, t) {
     t[0]!.data = '' + r.id;
     t[1]!.data = r.label;
@@ -81,19 +84,25 @@ const rowBatch = rowRenderer<Row>(ROW_HTML, [[0, 0], [1, 0, 0]], {
 });
 
 /* ------------------------------------------------------------------ */
-/* view                                                                 */
+/* view + whole-subtree tbody discipline                                 */
 /* ------------------------------------------------------------------ */
 
 const rows = signal<Row[]>([]);
-const list = each(rows, (r) => r.id, rowBatch);
+let tbody = document.getElementById('tbody') as HTMLElement;
+const table = tbody.parentElement as HTMLTableElement;
+const view: KeyedView<Row> = mountList(tbody, rows, (r) => r.id, rowBatch);
 
-// diagnostics hook (?debug) — exposes the live view for retention probes
-if (location.search.indexOf('debug') >= 0) {
-  (window as unknown as { __reView: unknown }).__reView = list;
+/** Swap the row host for a fresh shallow clone (id/attrs preserved). The
+ *  old body detaches WITH all its rows in one native subtree remove —
+ *  O(1) DOM ops regardless of row count — and the anchored view rehosts
+ *  into the fresh body, its ledger dropped without per-row work. */
+function swapTbody(): void {
+  const nt = tbody.cloneNode(false) as HTMLElement;
+  table.insertBefore(nt, tbody);
+  view.rehost(nt);
+  table.removeChild(tbody);
+  tbody = nt;
 }
-
-const tbody = document.getElementById('tbody')!;
-mountEach(tbody, list);
 
 let selectedRow: HTMLElement | null = null;
 
@@ -103,7 +112,9 @@ let selectedRow: HTMLElement | null = null;
 
 function run(): void {
   selectedRow = null;
-  rows.value = buildData(1000);
+  rows.value = buildData(1000); // pure signal sync: R11-measured faster than a
+  // tbody swap for replace (replaceChildren + staged build 3.4ms vs 12.0ms —
+  // removing the tbody invalidates the whole table grid; per-row removal does not)
 }
 
 function runLots(): void {
@@ -129,15 +140,16 @@ function update(): void {
 
 function clearAll(): void {
   selectedRow = null;
-  rows.value = [];
+  swapTbody(); // 1000 rows detach as ONE subtree
+  rows.value = []; // view already empty -> anchor-only replaceChildren
 }
 
 function swapRows(): void {
-  if (rows.peek().length > 10) list.swapAt(1, 998);
+  if (rows.peek().length > 10) view.swapAt(1, 998);
 }
 
 /* ------------------------------------------------------------------ */
-/* events (delegation — 1 listener on tbody)                            */
+/* events (delegation on the table — survives tbody swaps)              */
 /* ------------------------------------------------------------------ */
 
 for (const [id, fn] of [
@@ -151,7 +163,7 @@ for (const [id, fn] of [
   document.getElementById(id)!.addEventListener('click', fn);
 }
 
-tbody.addEventListener('click', (e) => {
+table.addEventListener('click', (e) => {
   let p = e.target as HTMLElement | null;
   while (p && p.tagName !== 'TD') p = p.parentElement;
   if (p === null) return;
@@ -165,6 +177,6 @@ tbody.addEventListener('click', (e) => {
   } else if (cols[2] === p) {
     // remove column -> delete row (O(1), index-addressed)
     if (tr === selectedRow) selectedRow = null;
-    list.removeAt((tr as unknown as { sectionRowIndex: number }).sectionRowIndex);
+    view.removeAt((tr as unknown as { sectionRowIndex: number }).sectionRowIndex);
   }
 });
