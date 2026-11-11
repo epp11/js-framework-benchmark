@@ -54,11 +54,7 @@ function buildData(count: number): Row[] {
     data[i] = {
       id: idSeq++,
       label:
-        ADJECTIVES[_random(ADJECTIVES.length)] +
-        ' ' +
-        COLOURS[_random(COLOURS.length)] +
-        ' ' +
-        NOUNS[_random(NOUNS.length)],
+        `${ADJECTIVES[_random(ADJECTIVES.length)]} ${COLOURS[_random(COLOURS.length)]} ${NOUNS[_random(NOUNS.length)]}`,
     };
   }
   return data;
@@ -78,7 +74,12 @@ const ROW_HTML =
 const rowBatch = rowRenderer<Row>(ROW_HTML, [[0, 0], [1, 0, 0]], {
   batch: 64,
   values(r, t) {
-    t[0]!.data = '' + r.id;
+    // NOTE: assign the NUMBER, not `'' + r.id` — a JS-layer ToString on
+    // ever-growing fresh ids fills V8's smi_string_cache, a 64KB engine
+    // cache that a last-resort GC cannot reclaim (measured: R13 probe).
+    // DOM assignment takes the WebIDL DOMString conversion, which does not
+    // pin the engine string cache; 5×(run+clear) cycles stay flat.
+    t[0]!.data = r.id as unknown as string;
     t[1]!.data = r.label;
   },
 });
@@ -98,9 +99,8 @@ const view: KeyedView<Row> = mountList(tbody, rows, (r) => r.id, rowBatch);
  *  into the fresh body, its ledger dropped without per-row work. */
 function swapTbody(): void {
   const nt = tbody.cloneNode(false) as HTMLElement;
-  table.insertBefore(nt, tbody);
   view.rehost(nt);
-  table.removeChild(tbody);
+  tbody.replaceWith(nt); // ONE table mutation (insertBefore+removeChild was two)
   tbody = nt;
 }
 

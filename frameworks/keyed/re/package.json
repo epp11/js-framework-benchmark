@@ -11,7 +11,7 @@
   },
   "scripts": {
     "dev": "esbuild src/main.ts --bundle --format=iife --outfile=dist/bundle.js --sourcemap",
-    "build-prod": "esbuild src/main.ts --bundle --format=iife --minify --mangle-props=^_ --outfile=dist/bundle.js"
+    "build-prod": "esbuild src/main.ts --bundle --format=iife --minify --mangle-props=^_ --outfile=dist/bundle.js && terser dist/bundle.js --compress passes=3,unsafe_arrows=true,unsafe=true,unsafe_math=true --mangle --format indent_level=0,comments=false -o dist/bundle.js"
   },
   "keywords": [
     "js-framework-benchmark",
@@ -30,6 +30,7 @@
     "@re/core": "file:re-core"
   },
   "devDependencies": {
-    "esbuild": "^0.25.10"
+    "esbuild": "^0.25.10",
+    "terser": "^5.51.2"
   }
 }
